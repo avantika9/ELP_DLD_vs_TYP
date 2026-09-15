@@ -1,0 +1,3 @@
+3dcalc -a pSTG.nii.gz -b lSMG.nii.gz
+-expr 'step(step(a)+step(b))'
+-prefix ROI_pSTG_SMG_union.nii.gz -datum byte
