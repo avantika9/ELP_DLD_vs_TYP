@@ -1,0 +1,290 @@
+---
+title: "Match_data"
+output: html_document
+date: "2025-09-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# ================== Matching: prioritize NVIQ (KBIT) and Maternal Education; age last ==================
+library(openxlsx)
+library(dplyr)
+library(clue)
+library(purrr)
+library(tibble)
+library(rstatix)
+# ---------------- File and columns ----------------
+file <- "/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD/DataAnalysis/Subject_match_selection.xlsx"
+sheet_orig <- "Phon_sub" # change the name of output as well
+sheet_cand <- "All_sub"
+
+id_col  <- "participant_id"
+kbit    <- "KBIT_Nonverbal_StS"   # NVIQ
+age     <- "Age_ses7"
+sex     <- "sex"
+hand    <- "Handedness_ses7"
+edu     <- "Combined.Mother.Education"  # Maternal education (coded numeric)
+
+# ---------------- Load data ----------------
+orig <- openxlsx::read.xlsx(file, sheet = sheet_orig, detectDates = FALSE)
+cand <- openxlsx::read.xlsx(file, sheet = sheet_cand, detectDates = FALSE)
+
+need <- c(id_col, kbit, sex, age, hand, edu)
+orig <- orig[, need]
+cand <- cand[, need]
+orig[[edu]] <- suppressWarnings(as.numeric(orig[[edu]]))
+cand[[edu]] <- suppressWarnings(as.numeric(cand[[edu]]))
+
+# ---------------- Helpers ----------------
+smd <- function(a, b) {
+  a <- as.numeric(a); b <- as.numeric(b)
+  (mean(a, na.rm = TRUE) - mean(b, na.rm = TRUE)) /
+    sqrt((var(a, na.rm = TRUE) + var(b, na.rm = TRUE)) / 2)
+}
+
+match_stratum_factory <- function(w_kbit, w_age, w_edu, age_caliper, edu_caliper, kbit_caliper,
+                                  bigM = 1e6) {
+  force(w_kbit); force(w_age); force(w_edu)
+  force(age_caliper); force(edu_caliper); force(kbit_caliper)
+  function(O, C) {
+    if (nrow(O) == 0 || nrow(C) == 0) return(tibble(orig_id = character(), cand_id = character()))
+    n_o <- nrow(O); n_c <- nrow(C)
+    cost <- matrix(0, n_o, n_c)
+    for (i in seq_len(n_o)) for (j in seq_len(n_c)) {
+      dk <- abs(O[[kbit]][i] - C[[kbit]][j])
+      da <- abs(O[[age]][i]  - C[[age]][j])
+      eo <- O[[edu]][i]; ec <- C[[edu]][j]
+
+      # Hard calipers / constraints
+      if (!is.na(kbit_caliper) && is.finite(dk) && dk > kbit_caliper) { cost[i,j] <- bigM; next }
+
+      # Age is last priority: by default, no hard caliper unless user supplies one
+      if (!is.na(age_caliper) && is.finite(da) && da > age_caliper) { cost[i,j] <- bigM; next }
+
+      # Maternal education: exact match if edu_caliper == 0 (including missing-with-missing only)
+      if (!is.na(edu_caliper) && is.finite(edu_caliper) && edu_caliper == 0) {
+        # Disallow mismatched missingness
+        if (xor(is.na(eo), is.na(ec))) { cost[i,j] <- bigM; next }
+        # If both present, require exact equality
+        if (!is.na(eo) && !is.na(ec) && eo != ec) { cost[i,j] <- bigM; next }
+        de_eff <- 0
+      } else {
+        # Otherwise, allow small differences with a caliper if provided
+        de <- if (is.na(eo) || is.na(ec)) NA_real_ else abs(eo - ec)
+        if (!is.na(edu_caliper) && is.finite(de) && de > edu_caliper) { cost[i,j] <- bigM; next }
+        de_eff <- if (is.na(de)) 0.5 else de
+      }
+
+      # Objective: prioritize KBIT and education; age has the lowest weight
+      if (!is.finite(dk) || !is.finite(da)) {
+        cost[i,j] <- bigM
+      } else {
+        cost[i, j] <- w_kbit*dk + w_edu*de_eff + w_age*da
+      }
+    }
+    # Solve assignment (pad if needed)
+    if (n_c < n_o) {
+      finite_cost <- cost[cost <  bigM]
+      pad_val <- if (length(finite_cost)) max(finite_cost) * 10 else bigM
+      pad <- matrix(pad_val, nrow = n_o, ncol = (n_o - n_c))
+      cost <- cbind(cost, pad)
+      sol <- solve_LSAP(cost)
+      keep <- which(sol <= n_c)
+      rows <- keep; cols <- sol[keep]
+    } else {
+      sol <- solve_LSAP(cost)
+      rows <- seq_len(n_o); cols <- sol
+    }
+    tibble(orig_id = O[[id_col]][rows], cand_id = C[[id_col]][cols])
+  }
+}
+
+run_match <- function(w_kbit, w_age, w_edu, age_caliper, edu_caliper, kbit_caliper) {
+  match_stratum <- match_stratum_factory(w_kbit, w_age, w_edu, age_caliper, edu_caliper, kbit_caliper)
+  strata <- orig |>
+    distinct(across(all_of(c(sex, hand)))) |>
+    arrange(.data[[sex]], .data[[hand]])
+
+  pairs <- purrr::map_dfr(seq_len(nrow(strata)), function(s) {
+    s_sex  <- strata[[sex]][s]
+    s_hand <- strata[[hand]][s]
+    O <- orig |> filter(.data[[sex]] == s_sex, .data[[hand]] == s_hand)
+    C <- cand |> filter(.data[[sex]] == s_sex, .data[[hand]] == s_hand)
+    match_stratum(O, C)
+  }) |>
+    distinct(cand_id, .keep_all = TRUE) |>
+    distinct(orig_id, .keep_all = TRUE)
+
+  m <- pairs |>
+    left_join(orig |> rename_with(~paste0("orig_", .x)), by = c("orig_id" = paste0("orig_", id_col))) |>
+    left_join(cand |> rename_with(~paste0("cand_", .x)), by = c("cand_id" = paste0("cand_", id_col)))
+
+  # Diagnostics
+  kbit_orig <- m[[paste0("orig_", kbit)]]
+  kbit_cand <- m[[paste0("cand_", kbit)]]
+  age_orig  <- m[[paste0("orig_", age)]]
+  age_cand  <- m[[paste0("cand_", age)]]
+  edu_orig  <- suppressWarnings(as.numeric(m[[paste0("orig_", edu)]]))
+  edu_cand  <- suppressWarnings(as.numeric(m[[paste0("cand_", edu)]]))
+
+  keep_edu  <- is.finite(edu_orig) & is.finite(edu_cand)
+
+  list(
+    pairs = pairs,
+    m = m,
+    kbit_smd = smd(kbit_orig, kbit_cand),
+    age_smd  = smd(age_orig,  age_cand),
+    edu_smd  = if (sum(keep_edu) > 1) smd(edu_orig[keep_edu], edu_cand[keep_edu]) else NA_real_,
+    kbit_p   = tryCatch(t.test(kbit_orig, kbit_cand, paired = FALSE, var.EQUAL = FALSE)$p.value, error = function(e) NA_real_),
+    age_p    = tryCatch(t.test(age_orig,  age_cand,  paired = FALSE, var.EQUAL = FALSE)$p.value, error = function(e) NA_real_),
+    edu_p    = if (sum(keep_edu) > 1) tryCatch(t.test(edu_orig[keep_edu], edu_cand[keep_edu], paired = FALSE)$p.value, error = function(e) NA_real_) else NA_real_
+  )
+}
+
+# ---------------- Auto-tune grid (Age = last priority) ----------------
+# High weights on KBIT and Education, very low weight on Age, strict KBIT caliper, exact Education
+grid <- expand.grid(
+  w_kbit = c(12, 16, 20),     # prioritize NVIQ
+  w_age  = c(0.25, 0.5, 1),   # age last
+  w_edu  = c(10, 14, 18),     # prioritize education
+  age_caliper  = NA_real_,    # no hard age caliper
+  edu_caliper  = 1,           # exact maternal education (including missing-with-missing only)
+  kbit_caliper = c(3, 4, 5),  # tight KBIT caliper
+  KEEP.OUT.ATTRS = FALSE
+)
+
+results <- lapply(seq_len(nrow(grid)), function(i) {
+  g <- grid[i, ]
+  c(as.list(g), run_match(g$w_kbit, g$w_age, g$w_edu, g$age_caliper, g$edu_caliper, g$kbit_caliper))
+})
+
+# Require: KBIT p > 0.05, Education p > 0.05 (Age is last priority, no requirement)
+feasible_idx <- which(sapply(results, function(x)
+  !is.na(x$kbit_p) && x$kbit_p > 0.05 &&
+  (is.na(x$edu_p) || x$edu_p > 0.05)
+))
+
+best <- if (length(feasible_idx)) {
+  feasible <- results[feasible_idx]
+  # Among feasible, minimize KBIT SMD first, then Education SMD, then Age SMD (age last)
+  idx <- order(
+    sapply(feasible, function(x) abs(x$kbit_smd)),
+    sapply(feasible, function(x) ifelse(is.na(x$edu_smd), Inf, abs(x$edu_smd))),
+    sapply(feasible, function(x) abs(x$age_smd))
+  )[1]
+  feasible[[idx]]
+} else {
+  message("No solution met KBIT and Education thresholds with this grid. Consider loosening KBIT caliper slightly or expanding candidates.")
+  # Fallback: maximize KBIT p, then Education p, then Age p, then minimize |Age SMD| (age last)
+  idx <- order(
+    sapply(results, function(x) ifelse(is.na(x$kbit_p), -Inf, x$kbit_p)),
+    sapply(results, function(x) ifelse(is.na(x$edu_p), -Inf, x$edu_p)),
+    sapply(results, function(x) ifelse(is.na(x$age_p), -Inf, x$age_p)),
+    -sapply(results, function(x) abs(x$age_smd)),
+    decreasing = TRUE
+  )[1]
+  results[[idx]]
+}
+
+# ---------------- Report best solution ----------------
+m <- best$m
+pairs <- best$pairs
+
+kbit_orig <- m[[paste0("orig_", kbit)]]
+kbit_cand <- m[[paste0("cand_", kbit)]]
+age_orig  <- m[[paste0("orig_", age)]]
+age_cand  <- m[[paste0("cand_", age)]]
+edu_orig  <- suppressWarnings(as.numeric(m[[paste0("orig_", edu)]]))
+edu_cand  <- suppressWarnings(as.numeric(m[[paste0("cand_", edu)]]))
+keep_edu  <- is.finite(edu_orig) & is.finite(edu_cand)
+
+tt_kbit <- t.test(kbit_orig, kbit_cand, paired = FALSE, var.EQUAL = FALSE)
+tt_age  <- t.test(age_orig,  age_cand,  paired = FALSE, var.EQUAL = FALSE)
+wx_edu  <- if (sum(keep_edu) > 1) suppressWarnings(wilcox.test(edu_orig[keep_edu], edu_cand[keep_edu], paired = FALSE, exact = FALSE)) else NULL
+
+cat("\nBest parameters found (Age last priority):\n")
+print(data.frame(
+  w_kbit = best$w_kbit, w_age = best$w_age, w_edu = best$w_edu,
+  age_caliper = best$age_caliper, edu_caliper = best$edu_caliper, kbit_caliper = best$kbit_caliper
+))
+
+med_edu_orig <- if (sum(keep_edu) > 0) median(edu_orig[keep_edu], na.rm = TRUE) else NA_real_
+med_edu_cand <- if (sum(keep_edu) > 0) median(edu_cand[keep_edu], na.rm = TRUE) else NA_real_
+
+# Rank-biserial effect size using rstatix
+eff_edu <- if (sum(keep_edu) > 1) {
+  df_edu <- data.frame(
+    group = factor(c(rep("orig", sum(keep_edu)), rep("cand", sum(keep_edu))),
+                   levels = c("orig", "cand")),
+    value = c(edu_orig[keep_edu], edu_cand[keep_edu])
+  )
+  rstatix::wilcox_effsize(df_edu, value ~ group, paired = FALSE, ci = TRUE, conf.level = 0.95)
+} else {
+  NULL
+}
+
+cat("\nDiagnostics:\n")
+cat("Matched pairs:", nrow(m), "\n")
+# Kbit comparison rseults
+cat("KBIT (NVIQ) means (orig vs cand): ",
+    round(mean(kbit_orig), 2), "vs", round(mean(kbit_cand), 2),
+    "| SMD:", round(best$kbit_smd, 3),
+    "| Welch t-test p:", signif(best$kbit_p, 4), "\n")
+# Age comparison results
+cat("Age  means (orig vs cand): ",
+    round(mean(age_orig), 3),  "vs", round(mean(age_cand), 3),
+    "| SMD:", round(best$age_smd, 3),
+    "| Welch t-test p:", signif(best$age_p, 4), "\n")
+
+
+if (sum(keep_edu) > 1) {
+  # Extract effect size info if available
+  if (!is.null(eff_edu) && nrow(eff_edu) > 0) {
+    r_rb  <- eff_edu$effsize[1]
+    ci_lo <- eff_edu$conf.low[1]
+    ci_hi <- eff_edu$conf.high[1]
+    mag   <- eff_edu$magnitude[1]
+    eff_txt <- sprintf(" | rank-biserial r: %.3f, 95%% CI [%.3f, %.3f] (%s)", r_rb, ci_lo, ci_hi, mag)
+  } else {
+    eff_txt <- ""
+  }
+
+  cat("Maternal Education (orig vs cand) medians:",
+      round(med_edu_orig, 2), "vs", round(med_edu_cand, 2),
+      "| SMD:", round(best$edu_smd, 3),
+      if (!is.null(wx_edu)) paste0(" | Wilcoxon rank-sum p:", signif(wx_edu$p.value, 4)) else "",
+      eff_txt,
+      "\n")
+
+  edu_equal <- edu_orig == edu_cand
+  cat("Maternal Education: exact matches (non-missing):",
+      round(mean(edu_equal[keep_edu], na.rm = TRUE), 3),
+      sprintf("  (%d/%d pairs)", sum(edu_equal[keep_edu], na.rm = TRUE), sum(keep_edu)), "\n")
+} else {
+  cat("Maternal Education: insufficient non-missing pairs for testing.\n")
+}
+
+# ---------------- Output matched table ----------------
+matched_pairs <- m |>
+  select(orig_id, cand_id,
+         orig_kbit = paste0("orig_", kbit),
+         cand_kbit = paste0("cand_", kbit),
+         orig_age  = paste0("orig_", age),
+         cand_age  = paste0("cand_", age),
+         orig_sex  = paste0("orig_", sex),
+         cand_sex  = paste0("cand_", sex),
+         orig_hand = paste0("orig_", hand),
+         cand_hand = paste0("cand_", hand),
+         orig_edu  = paste0("orig_", edu),
+         cand_edu  = paste0("cand_", edu))
+
+cat("\nMatched pairs (first few rows):\n")
+print(head(matched_pairs, 10))
+
+# Optionally save:
+openxlsx::write.xlsx(matched_pairs, "matched_pairs_phon.xlsx", overwrite = TRUE)
+# ===========================================================================
+```

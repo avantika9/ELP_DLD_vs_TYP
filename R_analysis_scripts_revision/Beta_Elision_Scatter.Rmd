@@ -1,0 +1,142 @@
+---
+title: "Beta Elision scatter plots"
+output: html_document
+date: "2026-08-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r}
+# Load necessary libraries
+library(openxlsx)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+
+# Read the data
+data <- openxlsx::read.xlsx("Beta_Elision_Scatter.xlsx", sheet = "Sheet1")
+
+# Rename columns (remove backslashes)
+colnames(data) <- c("subjects", "CTOPP_2_EL_ScS", "Beta_caudate", "Beta_IFGop", "Beta_pSTG_SMG", "group")
+
+# Convert Elision to numeric and remove n/a
+data <- data %>%
+  mutate(CTOPP_2_EL_ScS = as.numeric(CTOPP_2_EL_ScS)) %>%
+  filter(!is.na(CTOPP_2_EL_ScS))
+
+# Define colors matching the image
+colors <- c("DLD" = "#6BB8A3", "TYP" = "#E8957F")
+
+# Plot 1: Elision vs Beta Caudate
+plot1 <- ggplot(data, aes(x = Beta_caudate, y = CTOPP_2_EL_ScS, color = group, fill = group)) +
+  geom_point(size = 4, alpha = 0.7, shape = 21,color = "black", stroke = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15, linewidth = 1.2, show.legend = FALSE) +
+  scale_color_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  scale_y_continuous(limits = c(0, 20), breaks = seq(0, 20, 5)) +
+  labs(x = "Beta est. Caudate",
+       y = "Elision (CTOPP-2)",
+       color = "Group",
+       fill = "Group") +
+ 
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(face = "bold", size = 14, color = "black"),
+    legend.position = "right",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14, face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.8),
+  )
+
+# Plot 2: Elision vs Beta IFGop
+plot2 <- ggplot(data, aes(x = Beta_IFGop, y = CTOPP_2_EL_ScS, color = group, fill = group)) +
+  geom_point(size = 4, alpha = 0.7, shape = 21,color = "black", stroke = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15, linewidth = 1.2, show.legend = FALSE) +
+  scale_color_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  scale_y_continuous(limits = c(0, 20), breaks = seq(0, 20, 5)) +
+  labs(x = "Beta est. IFGop",
+       y = "Elision (CTOPP-2)",
+       color = "Group",
+       fill = "Group") +
+
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(face = "bold", size = 14, color = "black"),
+    legend.position = "right",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14, face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.8),
+  )
+
+# Plot 3: Elision vs Beta pSTG/SMG
+plot3 <- ggplot(data, aes(x = Beta_pSTG_SMG, y = CTOPP_2_EL_ScS, color = group, fill = group)) +
+  geom_point(size = 4, alpha = 0.7, shape = 21, color = "black", stroke = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15, linewidth = 1.2, show.legend = FALSE) +
+  scale_color_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  scale_y_continuous(limits = c(0, 20), breaks = seq(0, 20, 5)) +
+  labs(x = "Beta est. SMG",
+       y = "Elision (CTOPP-2)",
+       color = "Group",
+       fill = "Group") +
+
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(face = "bold", size = 14, color = "black"),
+    legend.position = "right",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14, face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.8),
+  )
+
+print(plot1)
+# Create combined plot with larger spacing
+combined_plot <- (plot2 / plot3 / plot1) + 
+  plot_layout(guides = "collect", heights = c(1, 1, 1))+
+  plot_annotation(
+    tag_levels = "a",
+      tag_prefix = "(",
+      tag_suffix = ")"
+  ) &
+  theme(
+    plot.tag = element_text(
+      face = "bold",
+      size = 16
+    ),
+    plot.tag.position = c(0.01, 0.98)
+  )
+
+print(combined_plot)
+
+# Display with larger size
+combined_plot
+
+# SAVE as high-resolution PNG (recommended)
+ggsave("Elision_Beta_Plots.png", plot = combined_plot, width = 6, height = 10, dpi = 300)
+
+
+```

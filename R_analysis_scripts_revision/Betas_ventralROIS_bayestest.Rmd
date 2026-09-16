@@ -1,0 +1,104 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-08-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages(c("BayesFactor"))
+
+```
+
+```{r}
+# Install packages if necessary
+
+library(openxlsx)
+library(dplyr)
+library(BayesFactor)
+
+# Read the Excel file
+my_data <- openxlsx::read.xlsx("betas_ses7ROI_pMTG_AG_union.xlsx",sheet = "Sheet1") # specify excel file
+roi <- "pMTG_AG"
+beta_variable <- paste0("Beta_estimates_", roi)
+
+#########################do not edit below###############################
+# Check the imported column names
+names(my_data)
+
+# Compute beta estimates for each subject
+my_data <- my_data %>%
+  mutate(
+    Beta_R1 = (R1S_H + R1S_L) - 2*R1S_C,
+    Beta_R2 = (R2S_H + R2S_L) - 2*R2S_C,
+    !!beta_variable := (Beta_R1 + Beta_R2) / 2
+  )
+
+# Ensure Group is treated as a categorical variable
+my_data$Group <- factor(my_data$Group)
+
+# View subject-level beta estimates
+# View subject-level beta estimates
+my_data %>%
+  select(ID, Group, Beta_R1, Beta_R2, all_of(beta_variable)) %>%
+  print(n = Inf)
+
+# Descriptive statistics by group
+summary_results <- my_data %>%
+  group_by(Group) %>%
+  summarise(
+    n = sum(!is.na(.data[[beta_variable]])),
+    mean = mean(.data[[beta_variable]], na.rm = TRUE),
+    sd = sd(.data[[beta_variable]], na.rm = TRUE),
+    median = median(.data[[beta_variable]], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\nROI:", roi, "\n")
+cat("Outcome variable:", beta_variable, "\n")
+cat("\nDescriptive summary by group:\n")
+print(summary_results)
+
+# ==============================
+# Bayesian independent two-sample t-test
+# ==============================
+bf_result <- ttestBF(
+  formula = as.formula(
+    paste(beta_variable, "~ Group")
+  ),
+  data = my_data,
+  nullInterval = NULL
+)
+
+cat("\nBayesian two-sample t-test:\n")
+print(bf_result)
+
+# ==============================
+# Extract BF10 and calculate BF01
+# ==============================
+BF10 <- as.numeric(
+  extractBF(bf_result, onlybf = TRUE)
+)
+
+BF01 <- 1 / BF10
+
+cat("\nBF10 =", round(BF10, 4), "\n")
+cat("BF01 =", round(BF01, 4), "\n")
+
+# ==============================
+# Interpret BF01
+# ==============================
+if (BF01 > 10) {
+  interpretation <- "Strong evidence for the null hypothesis: no group difference."
+} else if (BF01 >= 3) {
+  interpretation <- "Moderate evidence for the null hypothesis: no group difference."
+} else if (BF01 > 1/3) {
+  interpretation <- "Evidence is inconclusive or anecdotal."
+} else {
+  interpretation <- "Evidence favors the alternative hypothesis: a group difference."
+}
+
+cat("\nInterpretation:\n")
+cat(interpretation, "\n")
+
+```

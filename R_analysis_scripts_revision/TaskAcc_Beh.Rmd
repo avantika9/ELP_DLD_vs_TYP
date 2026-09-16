@@ -1,0 +1,662 @@
+---
+title: "TaskAcc_Beh"
+output: html_document
+date: "2026-08-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r}
+setwd("/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD/DataAnalysis")
+```
+# Sound Task Accuracy correlation with Elision
+```{r load-data}
+# ---- Read data ----
+# UPDATE the file path to your workbook
+file <- "/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD/DataAnalysis/matched_pairs_phon_sem.xlsx"
+sheet <- "Matched_phon"
+dat_phon <- openxlsx::read.xlsx(file, sheet = sheet, detectDates = FALSE)
+
+# ---- Normality Test on All 4 Variables ----
+
+# Define all 4 variables
+vars <- list(
+  Phon_Task_Accuracy_DLD = dat_phon$Phon_Task_Accuracy_DLD,
+  CTOPP2_EL_ScS_DLD     = dat_phon$`CTOPP-2_EL_ScS_DLD`,
+  Phon_Task_Accuracy_TYP = dat_phon$Phon_Task_Accuracy_TYP,
+  CTOPP2_EL_ScS_TYP     = dat_phon$`CTOPP-2_EL_ScS_TYP`
+)
+
+# ---- Shapiro-Wilk Normality Test ----
+cat("===== SHAPIRO-WILK NORMALITY TEST =====\n\n")
+
+normality_results <- data.frame()
+
+for (var_name in names(vars)) {
+  # Convert to numeric if not already
+  variable_data <- as.numeric(vars[[var_name]])
+  # Remove NA values
+  variable_data <- variable_data[!is.na(variable_data)]
+  
+  test <- shapiro.test(vars[[var_name]])
+  normality_results <- rbind(normality_results, data.frame(
+    Variable    = var_name,
+    W_statistic = round(test$statistic, 4),
+    p_value     = round(test$p.value, 4),
+    Normal      = ifelse(test$p.value > 0.05, "Yes", "No")
+  ))
+}
+
+print(normality_results, row.names = FALSE)
+
+# ---- Q-Q Plots for All 4 Variables ----
+par(mfrow = c(2, 2))
+for (var_name in names(vars)) {
+  qqnorm(vars[[var_name]], 
+         main = paste("Q-Q Plot:", var_name),
+         col  = "steelblue", pch = 19)
+  qqline(vars[[var_name]], col = "red", lwd = 2)
+}
+par(mfrow = c(1, 1))
+
+cat("\nInterpretation: p-value > 0.05 = Normal | p-value < 0.05 = Not Normal\n")
+
+# ---- Decision Logic: Pearson vs Spearman ----
+
+# Extract p-values for decision-making
+phon_dld_normal <- normality_results$p_value[normality_results$Variable == "Phon_Task_Accuracy_DLD"] > 0.05
+ctopp_dld_normal <- normality_results$p_value[normality_results$Variable == "CTOPP2_EL_ScS_DLD"] > 0.05
+
+phon_typ_normal <- normality_results$p_value[normality_results$Variable == "Phon_Task_Accuracy_TYP"] > 0.05
+ctopp_typ_normal <- normality_results$p_value[normality_results$Variable == "CTOPP2_EL_ScS_TYP"] > 0.05
+
+# Determine appropriate test for each pair
+cat("\n===== CORRELATION TEST SELECTION =====\n\n")
+
+# Pair 1: DLD group
+pair1_test <- ifelse(phon_dld_normal & ctopp_dld_normal, "Pearson", "Spearman")
+cat("Pair 1 (DLD): Phon_Task_Accuracy_DLD vs CTOPP2_EL_ScS_DLD\n")
+cat("  → Both Normal?", phon_dld_normal & ctopp_dld_normal, "\n")
+cat("  → Use:", pair1_test, "correlation\n\n")
+
+# Pair 2: TYP group
+pair2_test <- ifelse(phon_typ_normal & ctopp_typ_normal, "Pearson", "Spearman")
+cat("Pair 2 (TYP): Phon_Task_Accuracy_TYP vs CTOPP2_EL_ScS_TYP\n")
+cat("  → Both Normal?", phon_typ_normal & ctopp_typ_normal, "\n")
+cat("  → Use:", pair2_test, "correlation\n\n")
+
+# ---- Run Correlation Tests ----
+cat("===== CORRELATION RESULTS =====\n\n")
+
+# Pair 1: DLD
+#cat("DLD GROUP:\n")
+cor_dld <- cor.test(dat_phon$Phon_Task_Accuracy_DLD, 
+                    dat_phon$`CTOPP-2_EL_ScS_DLD`,
+                    method = tolower(pair1_test))
+print(cor_dld)
+
+# Pair 2: TYP
+
+cor_typ <- cor.test(dat_phon$Phon_Task_Accuracy_TYP, 
+                    dat_phon$`CTOPP-2_EL_ScS_TYP`,
+                    method = tolower(pair2_test))
+print(cor_typ)
+
+# ---- Summary Table ----
+cat("\n\n===== SUMMARY TABLE =====\n\n")
+summary_table <- data.frame(
+  Group = c("DLD", "TYP"),
+  Test = c(pair1_test, pair2_test),
+  Correlation = c(round(cor_dld$estimate, 4), round(cor_typ$estimate, 4)),
+  P_value = c(round(cor_dld$p.value, 4), round(cor_typ$p.value, 4)),
+  Significant = c(ifelse(cor_dld$p.value < 0.05, "Yes", "No"),
+                  ifelse(cor_typ$p.value < 0.05, "Yes", "No"))
+)
+print(summary_table, row.names = FALSE)
+
+```
+# Plot Sound Task Accuracy vs Elision Score
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# Prepare data in long format for overlay plot
+dat_plot <- data.frame(
+  Group = c(rep("DLD", length(dat_phon$Phon_Task_Accuracy_DLD)),
+            rep("TYP", length(dat_phon$Phon_Task_Accuracy_TYP))),
+  Phonology = c(dat_phon$Phon_Task_Accuracy_DLD, 
+                dat_phon$Phon_Task_Accuracy_TYP),
+  CTOPP = c(dat_phon$`CTOPP-2_EL_ScS_DLD`, 
+            dat_phon$`CTOPP-2_EL_ScS_TYP`)
+)
+# ============================================================
+# Create overlay plot regression plot
+# ============================================================
+
+p <- ggplot(dat_plot, aes(x = Phonology, y = CTOPP, color = Group, fill = Group)) +
+  # Scatter points
+  geom_point(size = 4, alpha = 0.7, shape = 21, color = "black", stroke = 0.5) +
+  # Trend lines with confidence intervals
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15, linewidth = 1.2, show.legend = FALSE) +
+  # Labels and title
+  labs(
+    #title = "Correlation: Phonology Task vs CTOPP-2 Elision",
+    #subtitle = "DLD vs Typical Development Groups",
+    x = "Sound Task Accuracy (%)",
+    y = "Elision (CTOPP-2)",
+    color = "Group",
+    fill = "Group"
+  ) +
+  # Styling
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, color = "gray40", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    # Tick labels: SIZE 14 and BLACK
+    axis.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(face = "bold", size = 14, color = "black"),
+    
+  # Legend OUTSIDE
+    legend.position = "right",
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(size = 14),
+    #legend.key.size = unit(1, "cm"),
+    #legend.background = element_rect(color = "black", fill = "white", size = 1),
+    #legend.box.margin = margin(t = 8, r = 8, b = 8, l = 8),
+    
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7)
+  ) +
+  
+  # Color scheme
+  scale_color_manual(values = c("DLD" = "#66c2a5", "TYP" = "#fc8d62")) +
+  scale_fill_manual(values = c("DLD" = "#66c2a5", "TYP" = "#fc8d62")) +
+  
+# Axis scales
+  scale_y_continuous(limits = c(0, 20)) +
+  scale_x_continuous(limits = c(30, 100))
+p <- p +
+  labs(tag = "(c)") +
+  theme(
+    plot.tag          = element_text(face = "bold", size = 16),
+    plot.tag.position = c(0.008, 0.98)   # x, y in npc units: top-left
+  )
+
+print(p)
+
+# Optional: Print summary statistics for each group
+cat("\n===== SUMMARY STATISTICS =====\n\n")
+
+for (group in c("DLD", "TYP")) {
+  idx <- dat_plot$Group == group
+  phon <- dat_plot$Phonology[idx]
+  ctopp <- dat_plot$CTOPP[idx]
+  
+  cat(group, "Group:\n")
+  cat("  Phonology - Mean:", round(mean(phon, na.rm = TRUE), 2), 
+      ", SD:", round(sd(phon, na.rm = TRUE), 2), "\n")
+  cat("  CTOPP    - Mean:", round(mean(ctopp, na.rm = TRUE), 2), 
+      ", SD:", round(sd(ctopp, na.rm = TRUE), 2), "\n")
+  cat("  N:", sum(!is.na(phon) & !is.na(ctopp)), "\n\n")
+}
+# ============================================================
+# LINEAR REGRESSION MODELS & B-VALUES WITH CI
+# ============================================================
+cat("\n===== LINEAR REGRESSION RESULTS =====\n\n")
+
+for (group in c("DLD", "TYP")) {
+  idx <- dat_plot$Group == group
+  
+  # Fit model
+  model <- lm(CTOPP ~ Phonology, data = dat_plot[idx, ])
+  
+  # Extract summary
+  summary_stats <- summary(model)
+  
+  # Extract b-value and CI
+  b_value <- coef(model)["Phonology"]
+  ci <- confint(model, level = 0.95)["Phonology", ]
+  p_value <- summary_stats$coefficients["Phonology", "Pr(>|t|)"]
+  r_squared <- summary_stats$r.squared
+  
+  cat(group, "Group:\n")
+  cat("  b-value:", round(b_value, 4), "\n")
+  cat("  95% CI: [", round(ci[1], 4), ", ", round(ci[2], 4), "]\n")
+  cat("  p-value:", round(p_value, 4), "\n")
+  cat("  R²:", round(r_squared, 4), "\n")
+  cat("  N:", sum(!is.na(dat_plot$Phonology[idx]) & !is.na(dat_plot$CTOPP[idx])), "\n\n")
+}
+
+
+# ============================================================
+# BOXPLOTS: Elision (CTOPP-2) & Sound Task Accuracy by Group
+# ============================================================
+
+group_cols <- c("DLD" = "#66c2a5", "TYP" = "#fc8d62")
+
+# Shared theme so boxplots match the scatter plot styling
+theme_box <- theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    plot.title    = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.title    = element_text(size = 14, face = "bold"),
+    axis.text.x   = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y   = element_text(face = "bold", size = 14, color = "black"),
+    legend.position = "none",
+    panel.border  = element_rect(color = "black", fill = NA, size = 0.7)
+  )
+
+# ---- Boxplot 1: Elision (CTOPP-2) ----
+p_box_ctopp <- ggplot(dat_plot, aes(x = Group, y = CTOPP, fill = Group)) +
+  geom_boxplot(width = 0.55, alpha = 0.7, color = "black",
+               outlier.shape = NA, linewidth = 0.7) +
+  geom_jitter(width = 0.12, size = 3, shape = 21, alpha = 0.8,
+              color = "black", stroke = 0.4) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3.5,
+               fill = "white", color = "black") +
+  labs(x = NULL, y = "Elision (CTOPP-2)") +
+  scale_fill_manual(values = group_cols) +
+  scale_y_continuous(limits = c(0, 20)) +
+  theme_box
+
+# ---- Boxplot 2: Sound Task Accuracy ----
+p_box_phon <- ggplot(dat_plot, aes(x = Group, y = Phonology, fill = Group)) +
+  geom_boxplot(width = 0.55, alpha = 0.7, color = "black",
+               outlier.shape = NA, linewidth = 0.7) +
+  geom_jitter(width = 0.12, size = 3, shape = 21, alpha = 0.8,
+              color = "black", stroke = 0.4) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3.5,
+               fill = "white", color = "black") +
+  labs( x = NULL, y = "Sound Task Accuracy (%)") +
+  scale_fill_manual(values = group_cols) +
+  scale_y_continuous(limits = c(30, 100)) +
+  theme_box
+
+print(p_box_ctopp)
+print(p_box_phon)
+
+# ---- Side-by-side panel (needs patchwork; falls back gracefully) ----
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  library(patchwork)
+ p_boxes <- (p_box_ctopp | p_box_phon) 
+
+
+
+# ---- Group comparisons (Welch t-test + Wilcoxon) ----
+cat("\n===== GROUP COMPARISONS =====\n\n")
+
+for (v in c("Phonology", "CTOPP")) {
+  lab <- ifelse(v == "Phonology", "Sound Task Accuracy (%)", "Elision (CTOPP-2)")
+  f   <- as.formula(paste(v, "~ Group"))
+  tt  <- t.test(f, data = dat_plot)
+  wt  <- suppressWarnings(wilcox.test(f, data = dat_plot))
+  
+  cat(lab, "\n")
+  cat("  Welch t-test: t =", round(tt$statistic, 3),
+      ", df =", round(tt$parameter, 2),
+      ", p =", round(tt$p.value, 4), "\n")
+  cat("  Mean diff (DLD - TYP):", round(diff(rev(tt$estimate)), 3),
+      " 95% CI [", round(tt$conf.int[1], 3), ", ",
+      round(tt$conf.int[2], 3), "]\n", sep = "")
+  cat("  Wilcoxon: W =", wt$statistic, ", p =", round(wt$p.value, 4), "\n\n")
+}
+
+# Create combined plot with larger spacing
+combined_plot <- (p_boxes / p ) + 
+  plot_layout(guides = "collect", heights = c(1, 1))+
+    patchwork::plot_annotation(
+      tag_levels = "a",
+      tag_prefix = "(",
+      tag_suffix = ")"
+    ) &
+    theme(plot.tag = element_text(face = "bold", size = 14))
+  print(p_boxes)
+}
+
+# Display with larger size
+combined_plot
+
+# SAVE as high-resolution PNG (recommended)
+ggsave("Elision_sound_task_accuracy.png", plot = combined_plot, width = 6, height = 6, dpi = 300)
+
+```
+##################-----------------------------####################
+# Meaning Task Accuracy correlation with WC
+```{r load-data}
+# ---- Read data ----
+# UPDATE the file path to your workbook
+file <- "/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD/DataAnalysis/matched_pairs_phon_sem.xlsx"
+sheet <- "Matched_sem"
+dat_sem <- openxlsx::read.xlsx(file, sheet = sheet, detectDates = FALSE)
+
+# ---- Normality Test on All 4 Variables ----
+
+# Define all 4 variables
+vars <- list(
+  Sem_Task_Accuracy_DLD = dat_sem$Sem_Task_Accuracy_DLD,
+  CELF_WC_ScS_DLD     = dat_sem$`CELF_WC_ScS_DLD`,
+  Sem_Task_Accuracy_TYP = dat_sem$Sem_Task_Accuracy_TYP,
+  CELF_WC_ScS_TYP     = dat_sem$`CELF_WC_ScS_TYP`
+)
+
+# ---- Shapiro-Wilk Normality Test ----
+cat("===== SHAPIRO-WILK NORMALITY TEST =====\n\n")
+
+normality_results <- data.frame()
+
+for (var_name in names(vars)) {
+  # Convert to numeric if not already
+  variable_data <- as.numeric(vars[[var_name]])
+  # Remove NA values
+  variable_data <- variable_data[!is.na(variable_data)]
+  
+  test <- shapiro.test(vars[[var_name]])
+  normality_results <- rbind(normality_results, data.frame(
+    Variable    = var_name,
+    W_statistic = round(test$statistic, 4),
+    p_value     = round(test$p.value, 4),
+    Normal      = ifelse(test$p.value > 0.05, "Yes", "No")
+  ))
+}
+
+print(normality_results, row.names = FALSE)
+
+# ---- Q-Q Plots for All 4 Variables ----
+par(mfrow = c(2, 2))
+for (var_name in names(vars)) {
+  qqnorm(vars[[var_name]], 
+         main = paste("Q-Q Plot:", var_name),
+         col  = "steelblue", pch = 19)
+  qqline(vars[[var_name]], col = "red", lwd = 2)
+}
+par(mfrow = c(1, 1))
+
+cat("\nInterpretation: p-value > 0.05 = Normal | p-value < 0.05 = Not Normal\n")
+
+# ---- Decision Logic: Pearson vs Spearman ----
+
+# Extract p-values for decision-making
+phon_dld_normal <- normality_results$p_value[normality_results$Variable == "Sem_Task_Accuracy_DLD"] > 0.05
+celf_dld_normal <- normality_results$p_value[normality_results$Variable == "CELF_WC_ScS_DLD"] > 0.05
+
+phon_typ_normal <- normality_results$p_value[normality_results$Variable == "Sem_Task_Accuracy_TYP"] > 0.05
+celf_typ_normal <- normality_results$p_value[normality_results$Variable == "CELF_WC_ScS_TYP"] > 0.05
+
+# Determine appropriate test for each pair
+cat("\n===== CORRELATION TEST SELECTION =====\n\n")
+
+# Pair 1: DLD group
+pair1_test <- ifelse(phon_dld_normal & celf_dld_normal, "Pearson", "Spearman")
+cat("Pair 1 (DLD): Phon_Task_Accuracy_DLD vs Celf_WC_ScS_DLD\n")
+cat("  → Both Normal?", phon_dld_normal & celf_dld_normal, "\n")
+cat("  → Use:", pair1_test, "correlation\n\n")
+
+# Pair 2: TYP group
+pair2_test <- ifelse(phon_typ_normal & celf_typ_normal, "Pearson", "Spearman")
+cat("Pair 2 (TYP): Phon_Task_Accuracy_TYP vs Celf_WC_ScS_TYP\n")
+cat("  → Both Normal?", phon_typ_normal & celf_typ_normal, "\n")
+cat("  → Use:", pair2_test, "correlation\n\n")
+
+# ---- Run Correlation Tests ----
+cat("===== CORRELATION RESULTS =====\n\n")
+
+# Pair 1: DLD
+#cat("DLD GROUP:\n")
+cor_dld <- cor.test(dat_sem$Sem_Task_Accuracy_DLD, 
+                    dat_sem$`CELF_WC_ScS_DLD`,
+                    method = tolower(pair1_test))
+print(cor_dld)
+
+# Pair 2: TYP
+
+cor_typ <- cor.test(dat_sem$Sem_Task_Accuracy_TYP, 
+                    dat_sem$`CELF_WC_ScS_TYP`,
+                    method = tolower(pair2_test))
+print(cor_typ)
+
+# ---- Summary Table ----
+cat("\n\n===== SUMMARY TABLE =====\n\n")
+summary_table <- data.frame(
+  Group = c("DLD", "TYP"),
+  Test = c(pair1_test, pair2_test),
+  Correlation = c(round(cor_dld$estimate, 4), round(cor_typ$estimate, 4)),
+  P_value = c(round(cor_dld$p.value, 4), round(cor_typ$p.value, 4)),
+  Significant = c(ifelse(cor_dld$p.value < 0.05, "Yes", "No"),
+                  ifelse(cor_typ$p.value < 0.05, "Yes", "No"))
+)
+print(summary_table, row.names = FALSE)
+
+```
+
+# Plot Meaning Task Accuracy vs WC Score
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# Prepare data in long format for overlay plot
+dat_plot <- data.frame(
+  Group = c(rep("DLD", length(dat_sem$Sem_Task_Accuracy_DLD)),
+            rep("TYP", length(dat_sem$Sem_Task_Accuracy_TYP))),
+  Semantics = c(dat_sem$Sem_Task_Accuracy_DLD, 
+                dat_sem$Sem_Task_Accuracy_TYP),
+  CELF = c(dat_sem$`CELF_WC_ScS_DLD`, 
+            dat_sem$`CELF_WC_ScS_TYP`)
+)
+# ============================================================
+# Create overlay plot
+# ============================================================
+
+p <- ggplot(dat_plot, aes(x = Semantics, y = CELF, color = Group, fill = Group)) +
+  
+  # Scatter points
+  geom_point(size = 4, alpha = 0.7, shape = 21, color = "black", stroke = 0.5) +
+  
+  # Trend lines with confidence intervals
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15, linewidth = 1.2,show.legend = FALSE) +
+  
+  # Labels and title
+  labs(
+      #title = "Correlation:Semantic Task vs CELF WC",
+    #subtitle = "DLD vs Typical Development Groups",
+    x = "Meaning Task Accuracy (%)",
+    y = "Word Classes (CELF-5)",
+    color = "Group",
+    fill = "Group"
+  ) +
+  
+  # Styling
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, color = "gray40", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    
+    # Tick labels: SIZE 14 and BLACK
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(face = "bold", size = 14, color = "black"),
+    
+  # Legend OUTSIDE
+    legend.position = "right",
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(size = 14),
+   # legend.key.size = unit(1, "cm"),
+   # legend.background = element_rect(color = "black", fill = "white", size = 1),
+   # legend.box.margin = margin(t = 8, r = 8, b = 8, l = 8),
+    
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7)
+  ) +
+  
+  # Color scheme
+  scale_color_manual(values = c("DLD" = "#66c2a5", "TYP" = "#fc8d62")) +
+  scale_fill_manual(values = c("DLD" = "#66c2a5", "TYP" = "#fc8d62")) +
+  
+  # Axis scales
+  scale_y_continuous(limits = c(0, 20)) +
+  scale_x_continuous(limits = c(30, 100))
+# ---- Tag the scatter plot as (c) ----
+p <- p +
+  labs(tag = "(c)") +
+  theme(
+    plot.tag          = element_text(face = "bold", size = 15),
+    plot.tag.position = c(0.008, 0.98)
+  )
+print(p)
+
+# Optional: Print summary statistics for each group
+cat("\n===== SUMMARY STATISTICS =====\n\n")
+
+for (group in c("DLD", "TYP")) {
+  idx <- dat_plot$Group == group
+  sem <- dat_plot$Semantics[idx]
+  CELF <- dat_plot$CELF[idx]
+  
+  cat(group, "Group:\n")
+  cat("  Semantics - Mean:", round(mean(sem, na.rm = TRUE), 2), 
+      ", SD:", round(sd(sem, na.rm = TRUE), 2), "\n")
+  cat("  CelfWC    - Mean:", round(mean(CELF, na.rm = TRUE), 2), 
+      ", SD:", round(sd(CELF, na.rm = TRUE), 2), "\n")
+  cat("  N:", sum(!is.na(sem) & !is.na(CELF)), "\n\n")
+}
+# ============================================================
+# LINEAR REGRESSION MODELS & B-VALUES WITH CI
+# ============================================================
+cat("\n===== LINEAR REGRESSION RESULTS =====\n\n")
+
+for (group in c("DLD", "TYP")) {
+  idx <- dat_plot$Group == group
+  
+  # Fit model
+  model <- lm(CELF ~ Semantics, data = dat_plot[idx, ])
+  
+  # Extract summary
+  summary_stats <- summary(model)
+  
+  # Extract b-value and CI
+  b_value <- coef(model)["Semantics"]
+  ci <- confint(model, level = 0.95)["Semantics", ]
+  p_value <- summary_stats$coefficients["Semantics", "Pr(>|t|)"]
+  r_squared <- summary_stats$r.squared
+  
+  cat(group, "Group:\n")
+  cat("  b-value:", round(b_value, 4), "\n")
+  cat("  95% CI: [", round(ci[1], 4), ", ", round(ci[2], 4), "]\n")
+  cat("  p-value:", round(p_value, 4), "\n")
+  cat("  R²:", round(r_squared, 4), "\n")
+  cat("  N:", sum(!is.na(dat_plot$Semantics[idx]) & !is.na(dat_plot$CELF[idx])), "\n\n")
+}
+
+# ============================================================
+# BOXPLOTS: Word Classes (CELF) & Meaning Task Accuracy by Group
+# ============================================================
+
+library(patchwork)
+
+group_cols <- c("DLD" = "#66c2a5", "TYP" = "#fc8d62")
+
+# Shared theme so boxplots match the scatter plot styling
+theme_box <- theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.title       = element_text(size = 14, face = "bold"),
+    axis.text.x      = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y      = element_text(face = "bold", size = 14, color = "black"),
+    axis.title.x     = element_blank(),
+    legend.position  = "none",
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.7),
+    plot.margin      = margin(4, 6, 4, 6)
+  )
+
+# ---- Boxplot 1: Word Classes (CELF) ----
+p_box_celf <- ggplot(dat_plot, aes(x = Group, y = CELF, fill = Group)) +
+  geom_boxplot(width = 0.55, alpha = 0.7, color = "black",
+               outlier.shape = NA, linewidth = 0.7) +
+  geom_jitter(width = 0.12, size = 3, shape = 21, alpha = 0.8,
+              color = "black", stroke = 0.4) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3.5,
+               fill = "white", color = "black") +
+  labs(x = NULL, y = "Word Classes (CELF-5)") +
+  scale_fill_manual(values = group_cols) +
+  scale_y_continuous(limits = c(0, 20)) +
+  theme_box
+
+# ---- Boxplot 2: Meaning Task Accuracy ----
+p_box_sem <- ggplot(dat_plot, aes(x = Group, y = Semantics, fill = Group)) +
+  geom_boxplot(width = 0.55, alpha = 0.7, color = "black",
+               outlier.shape = NA, linewidth = 0.7) +
+  geom_jitter(width = 0.12, size = 3, shape = 21, alpha = 0.8,
+              color = "black", stroke = 0.4) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3.5,
+               fill = "white", color = "black") +
+  labs(x = NULL, y = "Meaning Task Accuracy (%)") +
+  scale_fill_manual(values = group_cols) +
+  scale_y_continuous(limits = c(30, 101)) +
+  theme_box
+
+print(p_box_celf)
+print(p_box_sem)
+
+
+# ---- Side-by-side panel (needs patchwork; falls back gracefully) ----
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  library(patchwork)
+ p_boxes <- (p_box_celf | p_box_sem)
+
+# ---- Group comparisons (Welch t-test + Wilcoxon) ----
+cat("\n===== GROUP COMPARISONS =====\n\n")
+
+for (v in c("CELF", "Semantics")) {
+  lab <- ifelse(v == "CELF", "Word Classes (CELF-5)", "Meaning Task Accuracy (%)")
+  f   <- as.formula(paste(v, "~ Group"))
+  tt  <- t.test(f, data = dat_plot)
+  wt  <- suppressWarnings(wilcox.test(f, data = dat_plot))
+  
+  cat(lab, "\n")
+  cat("  Welch t-test: t =", round(tt$statistic, 3),
+      ", df =", round(tt$parameter, 2),
+      ", p =", round(tt$p.value, 4), "\n")
+  cat("  Mean diff (DLD - TYP): ", round(diff(rev(tt$estimate)), 3),
+      " 95% CI [", round(tt$conf.int[1], 3), ", ",
+      round(tt$conf.int[2], 3), "]\n", sep = "")
+  cat("  Wilcoxon: W =", wt$statistic, ", p =", round(wt$p.value, 4), "\n\n")
+}
+# Create combined plot with larger spacing
+combined_plot <- (p_boxes / p ) + 
+  plot_layout(guides = "collect", heights = c(1, 1)) +
+    patchwork::plot_annotation(
+      tag_levels = "a",
+      tag_prefix = "(",
+      tag_suffix = ")"
+    ) &
+    theme(plot.tag = element_text(face = "bold", size = 16))
+  print(p_boxes)
+}
+
+# Display with larger size
+combined_plot
+
+# SAVE as high-resolution PNG (recommended)
+ggsave("WC_meaning_task_accuracy.png", plot = combined_plot, width = 6, height = 6, dpi = 300)
+
+```
+
+```

@@ -1,0 +1,194 @@
+---
+title: "BehDataAnalysis"
+output: html_document
+date: "2023-10-31"
+---
+
+```{r setup, include=FALSE}
+install.packages("ggsignif")
+install.packages("rstatix")
+install.packages("ggpubr")
+install.packages("ggbreak")
+knitr::opts_chunk$set(echo = TRUE)
+```
+## set wd
+```{r}
+setwd("/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD")
+```
+
+## BoxPlot
+# load dataset
+```{r}
+library(devtools)
+library(QuantPsyc)
+library(psych)
+library(extrafont)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(ggsignif)
+library(rstatix) 
+library(ggbreak) 
+```
+
+```{r load-data}
+# Read Data
+d1 <- read.csv('Data_Task_Acc_RT_Boxplot.csv')
+# stats
+stat.test <- d1 %>%
+  group_by(Condition) %>%
+  t_test(Accuracy ~ Group, paired = FALSE, var.equal = FALSE) %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance("p.adj") %>%
+# view results
+print(stat.test)
+
+#reorder
+d1$Group=factor(d1$Group,levels = c("DLD","TYP"), ordered=TRUE)
+
+# Relabel (replace existing_level1/existing_level2 with what you see above)
+d1$Condition <- factor(d1$Condition,
+                       levels = c("Phon", "Sem"),
+                       labels = c("Sound", "Meaning"))
+
+# Create the plot and change color of bars - Accuracy
+p <- ggplot(d1, aes(x = Condition, y = Accuracy, fill = Group)) +
+     theme_bw(base_size = 20)+
+     scale_fill_manual(values=c("WHITE","GREY"), name = "Group", labels = c("DLD", "TYP")) +
+# Outliers
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position = position_jitterdodge(), alpha=0.3)+
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )+
+# Plot the sig manually
+  #geom_signif(y_position = c(101.5,101.5, 105.5), xmin = c(0.8,1.8,0.8), 
+  #            xmax = c(1.2,2.2, 1.8), annotation = c("**","*", "*"),textsize = 10, vjust = 0.55,
+  #            tip_length = 0)+
+# Limits y axis
+  ylim(25,100)
+# labels
+p <- p + labs(
+              x = "", 
+              y = "% Accuracy"
+              ) 
+p + theme(plot.title = element_text(color="black", size=20, face="bold"),
+axis.title.x = element_text(color="black", size=20, face="bold"),
+axis.title.y = element_text(color="black", size=20, face="bold"),
+axis.text.y.left = element_text(color="black", size=20, face="bold"),
+axis.text.x.bottom = element_text(color="black", size=20, face="bold")
+)
+```
+
+```{r}
+library(tidyverse)
+library(rstatix)
+
+# Read data
+d1 <- read.csv("Data_Task_Acc_RT_Boxplot.csv")
+
+# Reorder and relabel factors
+d1$Group <- factor(
+  d1$Group,
+  levels = c("DLD", "TYP"),
+  ordered = TRUE
+)
+
+d1$Condition <- factor(
+  d1$Condition,
+  levels = c("Phon", "Sem"),
+  labels = c("Sound", "Meaning")
+)
+
+# Statistical tests
+stat.test <- d1 %>%
+  group_by(Condition) %>%
+  t_test(
+    Accuracy ~ Group,
+    paired = FALSE,
+    var.equal = FALSE
+  ) %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance("p.adj")
+
+print(stat.test)
+
+# Calculate means and standard errors
+plot_data <- d1 %>%
+  group_by(Condition, Group) %>%
+  summarise(
+    Mean_Accuracy = mean(Accuracy, na.rm = TRUE),
+    SE = sd(Accuracy, na.rm = TRUE) / sqrt(sum(!is.na(Accuracy))),
+    .groups = "drop"
+  )
+
+# Create bar plot
+p <- ggplot(
+  plot_data,
+  aes(
+    x = Condition,
+    y = Mean_Accuracy,
+    fill = Group
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7,
+    colour = "black"
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = Mean_Accuracy - SE,
+      ymax = Mean_Accuracy + SE
+    ),
+    position = position_dodge(width = 0.8),
+    width = 0.2,
+    linewidth = 0.8
+  ) +
+  scale_fill_manual(
+    values = c(
+      "DLD" = "#66c2a5",
+      "TYP" = "#fc8d62"
+    ),
+    name = "Group"
+  ) +
+  scale_y_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x = "Task",
+    y = "Task performance (%)"
+  ) +
+  theme_bw(base_size = 20) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.title = element_text(face = "bold"),
+    axis.title.x = element_text(
+      color = "black",
+      size = 20,
+      face = "bold"
+    ),
+    axis.title.y = element_text(
+      color = "black",
+      size = 20,
+      face = "bold"
+    ),
+    axis.text.x = element_text(
+      color = "black",
+      size = 20,
+      face = "bold"
+    ),
+    axis.text.y = element_text(
+      color = "black",
+      size = 20,
+      face = "bold"
+    )
+  )
+
+p
+```
+

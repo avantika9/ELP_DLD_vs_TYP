@@ -1,0 +1,157 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-09-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+# ---- Packages ----
+library(openxlsx)
+library(dplyr)
+#library(rlang)
+
+# Optional for rank-biserial effect size (Wilcoxon)
+has_rstatix <- requireNamespace("rstatix", quietly = TRUE)
+
+# ---- Helper: APA p-value formatting ----
+fmt_p <- function(p) {
+  if (is.na(p)) return("p = NA")
+  if (p < .001) "p < .001" else sprintf("p = %.3f", p)
+}
+
+# ---- Read data ----
+# UPDATE the file path to your workbook
+file <- "/Users/avantika/Library/CloudStorage/Box-Box/BDL/Member_Folders/Avantika/000_Projects/P_004_ELP_DLD/DataAnalysis/matched_pairs_phon_sem.xlsx"
+sheet <- "Matched_phon"
+
+dat <- openxlsx::read.xlsx(file, sheet = sheet, detectDates = FALSE)
+
+# ---- Coerce numeric where needed ----
+num_cols <- c("DLD_kbit","TYP_kbit","DLD_age","TYP_age","DLD_edu","TYP_edu","DLD_CELF","TYP_CELF")
+for (cc in num_cols) {
+  if (!cc %in% names(dat)) stop(paste("Column missing:", cc))
+  dat[[cc]] <- suppressWarnings(as.numeric(dat[[cc]]))
+}
+
+# ---- Split vectors ----
+DLD_kbit <- dat$DLD_kbit
+TYP_kbit <- dat$TYP_kbit
+DLD_age  <- dat$DLD_age
+TYP_age  <- dat$TYP_age
+DLD_celf <- dat$DLD_CELF
+TYP_celf <- dat$TYP_CELF
+DLD_edu  <- dat$DLD_edu
+TYP_edu  <- dat$TYP_edu
+DLD_elision <- dat$`CTOPP-2_EL_ScS_DLD` 
+TYP_elision <- dat$`CTOPP-2_EL_ScS_TYP`
+DLD_WC <- dat$CELF_WC_ScS_DLD
+TYP_WC <- dat$CELF_WC_ScS_TYP
+
+
+# Keep only non-missing pairs for education
+keep_edu <- is.finite(DLD_edu) & is.finite(TYP_edu)
+
+# ---- Descriptives ----
+desc <- list(
+  kbit = list(
+    n_DLD = sum(is.finite(DLD_kbit)),
+    n_TYP = sum(is.finite(TYP_kbit)),
+    m_DLD = mean(DLD_kbit, na.rm = TRUE),
+    sd_DLD = sd(DLD_kbit, na.rm = TRUE),
+    m_TYP = mean(TYP_kbit, na.rm = TRUE),
+    sd_TYP = sd(TYP_kbit, na.rm = TRUE),
+    r_DLD_min = min(DLD_kbit, na.rm = TRUE),
+    r_DLD_max = max(DLD_kbit, na.rm = TRUE),
+     r_TYP_min = min(DLD_kbit, na.rm = TRUE),
+    r_TYP_max = max(DLD_kbit, na.rm = TRUE)
+  ),
+  age = list(
+    n_DLD = sum(is.finite(DLD_age)),
+    n_TYP = sum(is.finite(TYP_age)),
+    m_DLD = mean(DLD_age, na.rm = TRUE),
+    sd_DLD = sd(DLD_age, na.rm = TRUE),
+    m_TYP = mean(TYP_age, na.rm = TRUE),
+    sd_TYP = sd(TYP_age, na.rm = TRUE),
+     r_DLD_min = min(DLD_age, na.rm = TRUE),
+    r_DLD_max = max(DLD_age, na.rm = TRUE),
+     r_TYP_min = min(DLD_age, na.rm = TRUE),
+    r_TYP_max = max(DLD_age, na.rm = TRUE)
+  ),
+  celf = list(
+    n_DLD = sum(is.finite(DLD_celf)),
+    n_TYP = sum(is.finite(TYP_celf)),
+    m_DLD = mean(DLD_celf, na.rm = TRUE),
+    sd_DLD = sd(DLD_celf, na.rm = TRUE),
+    m_TYP = mean(TYP_celf, na.rm = TRUE),
+    sd_TYP = sd(TYP_celf, na.rm = TRUE),
+   r_DLD_min = min(DLD_celf, na.rm = TRUE),
+    r_DLD_max = max(DLD_celf, na.rm = TRUE),
+     r_TYP_min = min(TYP_celf, na.rm = TRUE),
+    r_TYP_max = max(TYP_celf, na.rm = TRUE)
+  ),
+  edu = list(
+    n_pairs = sum(keep_edu),
+    med_DLD = if (any(keep_edu)) median(DLD_edu[keep_edu], na.rm = TRUE) else NA_real_,
+    med_TYP = if (any(keep_edu)) median(TYP_edu[keep_edu], na.rm = TRUE) else NA_real_,
+    iqr_DLD = if (any(keep_edu)) IQR(DLD_edu[keep_edu], na.rm = TRUE) else NA_real_,
+    iqr_TYP = if (any(keep_edu)) IQR(TYP_edu[keep_edu], na.rm = TRUE) else NA_real_,
+    r_DLD_min = min(DLD_edu, na.rm = TRUE),
+    r_DLD_max = max(DLD_edu, na.rm = TRUE),
+     r_TYP_min = min(DLD_edu, na.rm = TRUE),
+    r_TYP_max = max(DLD_edu, na.rm = TRUE)
+  ),
+ elsion = list(
+    n_DLD = sum(is.finite(DLD_elision)),
+    n_TYP = sum(is.finite(TYP_elision)),
+    m_DLD = mean(DLD_elision, na.rm = TRUE),
+    sd_DLD = sd(DLD_elision, na.rm = TRUE),
+    m_TYP = mean(TYP_elision, na.rm = TRUE),
+    sd_TYP = sd(TYP_elision, na.rm = TRUE),
+   r_DLD_min = min(DLD_elision, na.rm = TRUE),
+    r_DLD_max = max(DLD_elision, na.rm = TRUE),
+     r_TYP_min = min(TYP_elision, na.rm = TRUE),
+    r_TYP_max = max(TYP_elision, na.rm = TRUE)
+  ),
+  WC = list(
+    n_DLD = sum(is.finite(DLD_WC)),
+    n_TYP = sum(is.finite(TYP_WC)),
+    m_DLD = mean(DLD_WC, na.rm = TRUE),
+    sd_DLD = sd(DLD_WC, na.rm = TRUE),
+    m_TYP = mean(TYP_WC, na.rm = TRUE),
+    sd_TYP = sd(TYP_WC, na.rm = TRUE),
+   r_DLD_min = min(DLD_WC, na.rm = TRUE),
+    r_DLD_max = max(DLD_WC, na.rm = TRUE),
+     r_TYP_min = min(TYP_WC, na.rm = TRUE),
+    r_TYP_max = max(TYP_WC, na.rm = TRUE)
+  )
+ 
+)
+
+# ---- Tests ----
+# Welch two-sample t-tests
+tt_kbit <- tryCatch(t.test(DLD_kbit, TYP_kbit, paired = FALSE, var.equal = FALSE), error = function(e) NULL)
+tt_age  <- tryCatch(t.test(DLD_age,  TYP_age,  paired = FALSE, var.equal = FALSE), error = function(e) NULL)
+tt_celf <- tryCatch(t.test(DLD_celf, TYP_celf, paired = FALSE, var.equal = FALSE), error = function(e) NULL)
+tt_EL <- tryCatch(t.test(DLD_elision, TYP_elision, paired = FALSE, var.equal = FALSE), error = function(e) NULL)
+tt_WC <- tryCatch(t.test(DLD_WC, TYP_WC, paired = FALSE, var.equal = FALSE), error = function(e) NULL)
+
+# Wilcoxon rank-sum test (education)
+wx_edu <- if (sum(keep_edu) > 1) suppressWarnings(
+  wilcox.test(DLD_edu[keep_edu], TYP_edu[keep_edu], paired = FALSE, exact = FALSE)
+) else NULL
+
+# Optional: rank-biserial effect size for education
+eff_edu <- NULL
+if (has_rstatix && sum(keep_edu) > 1) {
+  df_edu <- data.frame(
+    group = factor(c(rep("DLD", sum(keep_edu)), rep("TYP", sum(keep_edu))), levels = c("DLD","TYP")),
+    value = c(DLD_edu[keep_edu], TYP_edu[keep_edu])
+  )
+  eff_edu <- rstatix::wilcox_effsize(df_edu, value ~ group, paired = FALSE, ci = TRUE, conf.level = 0.95)
+}
+
+
+```
